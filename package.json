@@ -2,6 +2,7 @@
   "name": "sync-settings-with-github",
   "displayName": "sync settings with github",
   "description": "Sync your vscode settings with github insb",
+  "publisher": "YoraiLevi",
   "version": "0.0.1",
   "engines": {
     "vscode": "^1.93.0"
@@ -9,15 +10,176 @@
   "categories": [
     "Other"
   ],
-  "activationEvents": ["onStartupFinished"],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/YoraiLevi/sync-settings-with-github.git"
+  },
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "sync-settings-with-github.helloWorld",
-        "title": "Hello World"
+        "command": "sync-settings-with-github.initialize",
+        "title": "Sync Settings: Initialize Settings Sync"
+      },
+      {
+        "command": "sync-settings-with-github.forcePush",
+        "title": "Sync Settings: Force Push Settings"
+      },
+      {
+        "command": "sync-settings-with-github.forcePull",
+        "title": "Sync Settings: Force Pull Settings"
+      },
+      {
+        "command": "sync-settings-with-github.sync",
+        "title": "Sync Settings: Sync"
+      },
+      {
+        "command": "sync-settings-with-github.toggleSync",
+        "title": "Sync Settings: Toggle Sync"
+      },
+      {
+        "command": "sync-settings-with-github.openRepository",
+        "title": "Sync Settings: Open Settings Repository"
+      },
+      {
+        "command": "sync-settings-with-github.reinitialize",
+        "title": "Sync Settings: Reinitialize Settings Repository"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Settings Sync",
+      "properties": {
+        "settingsSync.git.repositoryUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Git repository URL for settings synchronization"
+        },
+        "settingsSync.git.branch": {
+          "type": "string",
+          "default": "main",
+          "description": "Git branch to use for settings synchronization"
+        },
+        "settingsSync.git.pullBeforePush": {
+          "type": "boolean",
+          "default": true,
+          "description": "Always pull changes before pushing (for non-forced push)"
+        },
+        "settingsSync.git.pullBeforeForcePush": {
+          "type": "boolean",
+          "default": false,
+          "description": "Pull changes before force pushing (might still be overwritten)"
+        },
+        "settingsSync.syncInterval": {
+          "type": "number",
+          "default": 300,
+          "description": "Interval in seconds to check for remote changes"
+        },
+        "settingsSync.autoSync": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable automatic synchronization"
+        },
+        "settingsSync.pullOnLaunch": {
+          "type": "boolean",
+          "default": true,
+          "description": "Pull settings from remote when VS Code starts"
+        },
+        "settingsSync.debounceDelay": {
+          "type": "number",
+          "default": 5,
+          "description": "Delay in seconds before syncing after a change"
+        },
+        "settingsSync.files": {
+          "type": "object",
+          "default": {
+            "patterns": [
+              "settings.json",
+              "keybindings.json",
+              "snippets/**/*.code-snippets",
+              "globalStorage/storage.json"
+            ],
+            "excludePatterns": [],
+            "externalFiles": [
+              {
+                "source": "~/.bashrc",
+                "target": "shell/bashrc"
+              },
+              {
+                "source": "~/.bash_profile",
+                "target": "shell/bash_profile"
+              },
+              {
+                "source": "~/.profile",
+                "target": "shell/profile"
+              },
+              {
+                "source": "~/.zshrc",
+                "target": "shell/zshrc"
+              },
+              {
+                "source": "~/.zprofile",
+                "target": "shell/zprofile"
+              },
+              {
+                "source": "~/.config/fish/config.fish",
+                "target": "shell/fish/config.fish"
+              }
+            ]
+          },
+          "properties": {
+            "patterns": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Glob patterns for files to sync (relative to user settings directory)"
+            },
+            "excludePatterns": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Glob patterns for files to exclude from sync (relative to user settings directory)"
+            },
+            "externalFiles": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "description": "Absolute path or path relative to home directory (use ~ for home)"
+                  },
+                  "target": {
+                    "type": "string",
+                    "description": "Path in the git repository where the file should be stored"
+                  }
+                },
+                "required": [
+                  "source",
+                  "target"
+                ]
+              },
+              "description": "Additional files to sync from outside the settings directory"
+            }
+          },
+          "description": "Configuration for which files to sync"
+        },
+        "settingsSync.extensions.sync": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether to sync VS Code extensions"
+        },
+        "settingsSync.extensions.autoRemove": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether to automatically remove extensions that are not in the synced list"
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
@@ -28,14 +190,18 @@
     "test": "vscode-test"
   },
   "devDependencies": {
-    "@types/vscode": "^1.93.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "20.x",
+    "@types/vscode": "^1.93.0",
     "@typescript-eslint/eslint-plugin": "^8.17.0",
     "@typescript-eslint/parser": "^8.17.0",
-    "eslint": "^9.16.0",
-    "typescript": "^5.7.2",
     "@vscode/test-cli": "^0.0.10",
-    "@vscode/test-electron": "^2.4.1"
+    "@vscode/test-electron": "^2.4.1",
+    "eslint": "^9.16.0",
+    "typescript": "^5.7.2"
+  },
+  "dependencies": {
+    "fast-glob": "^3.3.2",
+    "simple-git": "^3.27.0"
   }
 }
