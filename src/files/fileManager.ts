@@ -2,14 +2,23 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import fg from 'fast-glob';
-import { Configuration } from '../config/configuration';
 
 function log(message: string, ...args: any[]) {
     console.log(`[FileManager] ${message}`, ...args);
 }
 
+type GlobFunction = (patterns: string[], options: fg.Options) => Promise<string[]>;
+
 export class FileManager {
-    constructor(private workingDir: string) {}
+    private workingDir: string;
+    private fs: typeof fs;
+    private glob: GlobFunction;
+
+    constructor(workingDir: string, fsModule: typeof fs = fs, globFunction: GlobFunction = fg) {
+        this.workingDir = workingDir;
+        this.fs = fsModule;
+        this.glob = globFunction;
+    }
 
     getUserSettingsPath(): string {
         // Get the product name (Code or Cursor)
@@ -23,9 +32,9 @@ export class FileManager {
                 : path.join(process.env.HOME || '', '.config', productName, 'User');
 
         // Ensure the directory exists
-        if (!fs.existsSync(userSettingsPath)) {
+        if (!this.fs.existsSync(userSettingsPath)) {
             log('Creating user settings directory');
-            fs.mkdirSync(userSettingsPath, { recursive: true });
+            this.fs.mkdirSync(userSettingsPath, { recursive: true });
         }
 
         log('User settings path:', userSettingsPath);
@@ -33,9 +42,12 @@ export class FileManager {
     }
 
     async findFilesToSync(basePath: string): Promise<string[]> {
-        const fileConfig = Configuration.getFilePatterns();
-        return fg(fileConfig.patterns, {
-            ignore: fileConfig.excludePatterns,
+        const config = vscode.workspace.getConfiguration('sync-settings-with-github');
+        const patterns = config.get<string[]>('patterns') || [];
+        const excludePatterns = config.get<string[]>('excludePatterns') || [];
+        
+        return this.glob(patterns, {
+            ignore: excludePatterns,
             dot: true,
             absolute: true,
             cwd: basePath
@@ -45,9 +57,9 @@ export class FileManager {
     async copyFile(source: string, target: string): Promise<void> {
         try {
             log('Copying file:', { source, target });
-            if (fs.existsSync(source)) {
-                await fs.promises.mkdir(path.dirname(target), { recursive: true });
-                await fs.promises.copyFile(source, target);
+            if (this.fs.existsSync(source)) {
+                await this.fs.promises.mkdir(path.dirname(target), { recursive: true });
+                await this.fs.promises.copyFile(source, target);
                 log('File copied successfully');
             } else {
                 log('Source file does not exist:', source);
