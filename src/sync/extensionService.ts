@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
+import { Configuration } from '../config/configuration';
 
 function log(message: string, ...args: any[]) {
     console.log(`[ExtensionService] ${message}`, ...args);
@@ -12,20 +13,20 @@ export interface ExtensionInfo {
 }
 
 export class ExtensionService {
-    constructor(private workingDir: string) {}
+    private readonly extensionsFile: string;
+
+    constructor(private workingDir: string) {
+        this.extensionsFile = path.join(this.workingDir, 'extensions.json');
+    }
 
     async pushExtensions(): Promise<void> {
-        const config = vscode.workspace.getConfiguration('settingsSync');
-        const shouldSync = config.get<boolean>('extensions.sync', true);
-
-        if (!shouldSync) {
+        if (!Configuration.shouldSyncExtensions()) {
             log('Extension sync is disabled');
             return;
         }
 
         try {
-            // Get current extensions and save them to file
-            const currentExtensions = await this.getCurrentExtensions();
+            const currentExtensions = this.getCurrentExtensions();
             await this.saveExtensionsToFile(currentExtensions);
             log('Extensions pushed to sync file');
         } catch (error) {
@@ -35,28 +36,21 @@ export class ExtensionService {
     }
 
     async pullExtensions(): Promise<void> {
-        const config = vscode.workspace.getConfiguration('settingsSync');
-        const shouldSync = config.get<boolean>('extensions.sync', true);
-        const shouldAutoRemove = config.get<boolean>('extensions.autoRemove', false);
-
-        if (!shouldSync) {
+        if (!Configuration.shouldSyncExtensions()) {
             log('Extension sync is disabled');
             return;
         }
 
         try {
-            // Read synced extensions from file
             const syncedExtensions = await this.readSyncedExtensions();
             if (!syncedExtensions) {
                 log('No synced extensions found');
                 return;
             }
 
-            // Install missing extensions
             await this.installMissingExtensions(syncedExtensions);
 
-            // Remove extra extensions if enabled
-            if (shouldAutoRemove) {
+            if (Configuration.shouldAutoRemoveExtensions()) {
                 await this.removeExtraExtensions(syncedExtensions);
             }
         } catch (error) {
@@ -65,7 +59,7 @@ export class ExtensionService {
         }
     }
 
-    private async getCurrentExtensions(): Promise<ExtensionInfo[]> {
+    private getCurrentExtensions(): ExtensionInfo[] {
         const extensions = vscode.extensions.all
             .filter(ext => !ext.packageJSON.isBuiltin) // Filter out built-in extensions
             .map(ext => ({
@@ -77,23 +71,9 @@ export class ExtensionService {
         return extensions;
     }
 
-    private getExtensionsFromStandardApi(): ExtensionInfo[] {
-        // Use the standard API as fallback
-        const extensions = vscode.extensions.all
-            .filter(ext => !ext.packageJSON.isBuiltin)
-            .map(ext => ({
-                id: ext.id,
-                version: ext.packageJSON.version
-            }));
-        
-        log('Extensions from standard API:', extensions);
-        return extensions;
-    }
-
     private async saveExtensionsToFile(extensions: ExtensionInfo[]): Promise<void> {
-        const filePath = path.join(this.workingDir, 'extensions.json');
         try {
-            await fs.promises.writeFile(filePath, JSON.stringify(extensions, null, 2));
+            await fs.promises.writeFile(this.extensionsFile, JSON.stringify(extensions, null, 2));
             log('Extensions saved to file');
         } catch (error) {
             log('Error saving extensions to file:', error);
@@ -102,12 +82,11 @@ export class ExtensionService {
     }
 
     private async readSyncedExtensions(): Promise<ExtensionInfo[] | null> {
-        const filePath = path.join(this.workingDir, 'extensions.json');
         try {
-            if (!fs.existsSync(filePath)) {
+            if (!fs.existsSync(this.extensionsFile)) {
                 return null;
             }
-            const content = await fs.promises.readFile(filePath, 'utf-8');
+            const content = await fs.promises.readFile(this.extensionsFile, 'utf-8');
             const extensions = JSON.parse(content) as ExtensionInfo[];
             log('Read synced extensions:', extensions);
             return extensions;

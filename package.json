@@ -101,33 +101,7 @@
               "snippets/**/*.code-snippets",
               "globalStorage/storage.json"
             ],
-            "excludePatterns": [],
-            "externalFiles": [
-              {
-                "source": "~/.bashrc",
-                "target": "shell/bashrc"
-              },
-              {
-                "source": "~/.bash_profile",
-                "target": "shell/bash_profile"
-              },
-              {
-                "source": "~/.profile",
-                "target": "shell/profile"
-              },
-              {
-                "source": "~/.zshrc",
-                "target": "shell/zshrc"
-              },
-              {
-                "source": "~/.zprofile",
-                "target": "shell/zprofile"
-              },
-              {
-                "source": "~/.config/fish/config.fish",
-                "target": "shell/fish/config.fish"
-              }
-            ]
+            "excludePatterns": []
           },
           "properties": {
             "patterns": {
@@ -143,27 +117,6 @@
                 "type": "string"
               },
               "description": "Glob patterns for files to exclude from sync (relative to user settings directory)"
-            },
-            "externalFiles": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "source": {
-                    "type": "string",
-                    "description": "Absolute path or path relative to home directory (use ~ for home)"
-                  },
-                  "target": {
-                    "type": "string",
-                    "description": "Path in the git repository where the file should be stored"
-                  }
-                },
-                "required": [
-                  "source",
-                  "target"
-                ]
-              },
-              "description": "Additional files to sync from outside the settings directory"
             }
           },
           "description": "Configuration for which files to sync"

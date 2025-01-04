@@ -69,17 +69,7 @@ Synchronize your VS Code settings, keybindings, snippets, and shell configuratio
             "snippets/**/*.code-snippets",
             "globalStorage/storage.json"
         ],
-        "excludePatterns": [],
-        "externalFiles": [
-            {
-                "source": "~/.bashrc",
-                "target": "shell/bashrc"
-            },
-            {
-                "source": "~/.zshrc",
-                "target": "shell/zshrc"
-            }
-        ]
+        "excludePatterns": []
     }
 }
 \`\`\`
@@ -104,27 +94,6 @@ Synchronize your VS Code settings, keybindings, snippets, and shell configuratio
    ```
 3. Run "Initialize Settings Sync"
 4. Your settings will start syncing automatically
-
-### Adding Shell Config Files
-Add shell configuration files to sync:
-```json
-{
-    "settingsSync.files.externalFiles": [
-        {
-            "source": "~/.bashrc",
-            "target": "shell/bashrc"
-        },
-        {
-            "source": "~/.zshrc",
-            "target": "shell/zshrc"
-        },
-        {
-            "source": "~/.config/fish/config.fish",
-            "target": "shell/fish/config.fish"
-        }
-    ]
-}
-```
 
 ### Custom File Patterns
 Add custom files or folders to sync:
@@ -159,8 +128,7 @@ If synchronization isn't working:
 If files aren't syncing:
 1. Verify file patterns in settings
 2. Check file permissions
-3. Ensure external files exist at specified paths
-4. Check the VS Code output panel for file-related logs
+3. Check the VS Code output panel for file-related logs
 
 ## Contributing
 
