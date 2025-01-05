@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
-import { Configuration } from '../config/configuration';
-import { FileManager } from './fileManager';
+import { getConfiguration } from '../utils/configuration';
 
 function log(message: string, ...args: any[]) {
     console.log(`[WatcherService] ${message}`, ...args);
@@ -9,31 +8,36 @@ function log(message: string, ...args: any[]) {
 export class WatcherService {
     private disposables: vscode.Disposable[] = [];
     private debounceTimer: NodeJS.Timeout | undefined;
+    private onFileChange: Array<(uris: Array<vscode.Uri>) => Promise<void>> = [];
+    private changedUris: Set<string> = new Set();
+    constructor() {}
+    
+    public get debounceDelay(): number {
+        return getConfiguration().getDebounceDelay();
+    }
+    
+    public listenOnFileChange(onFileChange: (uris: Array<vscode.Uri>) => Promise<void>): (uris: Array<vscode.Uri>) => Promise<void> {
+        this.onFileChange.push(onFileChange);
+        return onFileChange;
+    }
 
-    constructor(
-        private fileManager: FileManager,
-        private onFileChange: () => Promise<void>
-    ) {}
+    public removeOnFileChange(onFileChange: (uris: Array<vscode.Uri>) => Promise<void>): void {
+        this.onFileChange = this.onFileChange.filter(fn => fn !== onFileChange);
+    }
 
-    async setupFileWatcher(): Promise<void> {
+    public watchPatterns(patterns: vscode.GlobPattern[]): void {
         log('Setting up file watcher');
-        const userSettingsPath = this.fileManager.getUserSettingsPath();
-        log('User settings path:', userSettingsPath);
 
-        const fileConfig = Configuration.getFilePatterns();
-
-        // Create watchers for settings directory patterns
-        for (const pattern of fileConfig.patterns) {
+        for (const pattern of patterns) {
             log(`Setting up watcher for pattern: ${pattern}`);
             try {
                 const watcher = vscode.workspace.createFileSystemWatcher(
-                    new vscode.RelativePattern(userSettingsPath, pattern),
+                    pattern,
                     false, // Don't ignore create events
                     false, // Don't ignore change events
                     false  // Don't ignore delete events
                 );
 
-                // Use a single handler for all events
                 watcher.onDidChange(uri => this.handleFileChange(uri));
                 watcher.onDidCreate(uri => this.handleFileChange(uri));
                 watcher.onDidDelete(uri => this.handleFileChange(uri));
@@ -48,38 +52,55 @@ export class WatcherService {
         log('File watcher setup complete');
     }
 
-    async handleFileChange(uri: vscode.Uri): Promise<void> {
+    public clearAllWatchers(): void {
+        log('Clearing all watchers');
+        this.onFileChange = [];
+        this.disposables.forEach(d => d.dispose());
+        this.disposables = [];
+        this.stopDebounceTimer();
+    }
+    
+    clearChangedUris(): void {
+        this.changedUris.clear();
+    }
+
+    handleFileChange(uri: vscode.Uri): void {
+        log('Debounce delay:', this.debounceDelay);
+        this.stopDebounceTimer();
+        
         log('File change detected:', uri.fsPath);
+        this.changedUris.add(uri.fsPath);
+        
 
-        const debounceDelay = Configuration.getDebounceDelay();
-        log('Debounce delay:', debounceDelay);
+        this.debounceTimer = setTimeout(async () => {
+            log('Debounce timer expired, handling file change');
+            try {
+                const uris = Array.from(this.changedUris).map(uri => vscode.Uri.file(uri));
+                for (const onFileChange of this.onFileChange) {
+                    await onFileChange(uris);
+                }
+            } catch (error) {
+                log('Error handling file change:', error);
+            }
+            finally {
+                this.clearChangedUris();
+                this.stopDebounceTimer();
+            }
+        }, this.debounceDelay);
 
+    }
+
+    public stopDebounceTimer(): void {
         if (this.debounceTimer) {
             log('Clearing existing debounce timer');
             clearTimeout(this.debounceTimer);
+            this.debounceTimer = undefined;
         }
-
-        return new Promise<void>((resolve, reject) => {
-            log('Setting up new debounce timer');
-            this.debounceTimer = setTimeout(async () => {
-                log('Debounce timer expired, handling file change');
-                try {
-                    await this.onFileChange();
-                    resolve();
-                } catch (error) {
-                    log('Error handling file change:', error);
-                    reject(error);
-                }
-            }, debounceDelay);
-        });
     }
-
+    
     dispose(): void {
         log('Disposing watchers');
-        if (this.debounceTimer) {
-            clearTimeout(this.debounceTimer);
-        }
-        this.disposables.forEach(d => d.dispose());
+        this.clearAllWatchers();
         log('Watchers disposed');
     }
 } 

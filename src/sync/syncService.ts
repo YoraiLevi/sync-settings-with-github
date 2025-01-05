@@ -1,50 +1,38 @@
 import * as vscode from 'vscode';
 import { GitService } from '../git/gitService';
-import { ExtensionService } from './extensionService';
-import { FileManager } from '../files/fileManager';
 import { WatcherService } from '../files/watcherService';
-import { Configuration } from '../config/configuration';
-
+import { getConfiguration } from '../utils/configuration';
+import { pullExtensions, pushExtensions } from '../utils/extensionUtils';
+import * as fs from 'fs';
+import path from 'path';
+import { resolveVSCodeVariables } from '../utils/pathUtils';
 function log(message: string, ...args: any[]) {
     console.log(`[SyncService] ${message}`, ...args);
 }
 
 export class SyncService {
     private syncTimer: NodeJS.Timeout | undefined;
-    private isEnabled: boolean = false;
-    private fileManager: FileManager;
-    private watcherService: WatcherService;
-    
+    private extensionsFile: string;
+    private onFileChange: (uris: Array<vscode.Uri>) => Promise<void>;
     constructor(
         private context: vscode.ExtensionContext,
         private gitService: GitService,
-        private extensionService: ExtensionService
+        private watcherService: WatcherService,
     ) {
-        log('SyncService initialized');
-        this.fileManager = new FileManager(this.gitService.getWorkingDirectory());
-        this.watcherService = new WatcherService(
-            this.fileManager, 
-            this.handleFileChange.bind(this)
-        );
+        this.extensionsFile = this.context.globalStorageUri.fsPath + '/extensions.json';
+        this.onFileChange = this.watcherService.listenOnFileChange(this.handleFileChange.bind(this));
+        this.initialize();
     }
 
     public get enabled(): boolean {
-        return this.isEnabled;
+        return getConfiguration().getSyncEnabled();
     }
-
-    public toggleEnabled = () => {
-        if (!this.isEnabled) {
-            this.enable();
-        } else {
-            this.disable();
-        }
-    };
 
     async initialize(): Promise<void> {
         log('Initializing sync service');
         await this.gitService.initialize();
         
-        if (Configuration.shouldPullOnLaunch()) {
+        if (getConfiguration().shouldPullOnLaunch()) {
             try {
                 log('Performing initial pull of settings');
                 await this.gitService.pull();
@@ -52,9 +40,9 @@ export class SyncService {
                 const hasRemoteChanges = await this.gitService.hasChanges();
                 if (hasRemoteChanges) {
                     log('Remote changes detected, copying to settings directory');
-                    await this.fileManager.copyFilesFromWorkingDir();
+                    // await this.fileManager.copyFilesFromWorkingDir();
                     log('Pulling extensions from sync file');
-                    await this.extensionService.pullExtensions();
+                    await pullExtensions(this.extensionsFile);
                 } else {
                     log('No remote changes to apply during initialization');
                 }
@@ -62,26 +50,58 @@ export class SyncService {
                 log('Error during initial pull:', error);
             }
         }
-
-        await this.watcherService.setupFileWatcher();
-        await this.setupPeriodicSync();
+        
+        await this.setupWatchers();
         await this.setupExtensionWatcher();
-        this.isEnabled = true;
         log('Sync service initialized successfully');
+    }
+
+    public async setupWatchers() {
+        await this.setupFileWatcher();
+        await this.setupPeriodicSync();
+    }
+
+    public async teardownWatchers() {
+        await this.teardownFileWatcher();
+        await this.teardownPeriodicSync();
+    }
+
+    private async setupFileWatcher() {
+        for (const entry of getConfiguration().getFilePatterns()) {
+
+            let conditions = entry.conditions || {};
+            if (entry.conditions && typeof entry.conditions !== typeof ({})) {
+                throw new Error('Conditions are not an object');
+            }
+            if (entry.conditions) {
+                const allConditionsMet = Object.keys(conditions).reduce((result: boolean, condition: string) => {
+                    return result && (process.env[condition] === conditions[condition]);
+                }, true);
+                if (!allConditionsMet) {
+                    continue;
+                }
+            }
+
+            let baseDir = entry.baseDir ? vscode.Uri.file(resolveVSCodeVariables(entry.baseDir)) : getConfiguration().getUserSettingsPath();
+            const patterns = entry.patterns.map(pattern => new vscode.RelativePattern(baseDir, pattern));
+            log('Watching patterns:', patterns);
+            await this.watcherService.watchPatterns(patterns);
+        }
+    }
+    private teardownFileWatcher() {
+        this.watcherService.clearAllWatchers();
+        this.onFileChange = async (uris: Array<vscode.Uri>) => {};
     }
 
     private async setupPeriodicSync(): Promise<void> {
         log('Setting up periodic sync');
-        const interval = Configuration.getSyncInterval();
+        const interval = getConfiguration().getSyncInterval();
         log('Sync interval:', interval);
 
-        if (this.syncTimer) {
-            log('Clearing existing sync timer');
-            clearTimeout(this.syncTimer);
-        }
+        this.teardownPeriodicSync();
 
         this.syncTimer = setTimeout(async () => {
-            if (this.isEnabled) {
+            if (this.enabled && getConfiguration().isAutoSyncEnabled()) {
                 log('Running periodic sync');
                 await this.sync();
                 // Setup next sync after current one completes
@@ -91,9 +111,18 @@ export class SyncService {
         log('Periodic sync setup complete');
     }
 
-    private async handleFileChange(): Promise<void> {
+    private teardownPeriodicSync() {
+        if (this.syncTimer) {
+            log('Clearing existing sync timer');
+            clearTimeout(this.syncTimer);
+            this.syncTimer = undefined;
+        }
+    }
+
+    private async handleFileChange(uris: Array<vscode.Uri>): Promise<void> {
         try {
-            await this.fileManager.copyFilesToWorkingDir();
+            log('File change detected:', uris);
+            // await this.fileManager.copyFilesToWorkingDir();
             if (await this.gitService.hasChanges()) {
                 log('Changes detected, syncing');
                 await this.sync();
@@ -107,7 +136,7 @@ export class SyncService {
     }
 
     private async withSyncLock<T>(operation: () => Promise<T>, operationName: string): Promise<T> {
-        if (!this.isEnabled) {
+        if (!this.enabled) {
             log('Sync is disabled');
             return Promise.reject(new Error('Sync is disabled'));
         }
@@ -127,8 +156,8 @@ export class SyncService {
     }
 
     private async pushChanges(): Promise<void> {
-        await this.fileManager.copyFilesToWorkingDir();
-        await this.extensionService.pushExtensions();
+        // await this.fileManager.copyFilesToWorkingDir();
+        await pushExtensions(this.extensionsFile);
         await this.gitService.push();
     }
 
@@ -136,8 +165,8 @@ export class SyncService {
         await this.gitService.pull();
         const hasRemoteChanges = await this.gitService.hasChanges();
         if (hasRemoteChanges) {
-            await this.fileManager.copyFilesFromWorkingDir();
-            await this.extensionService.pullExtensions();
+            await pullExtensions(this.extensionsFile);
+            // await this.fileManager.copyFilesFromWorkingDir();
         }
     }
 
@@ -159,8 +188,8 @@ export class SyncService {
 
     async forcePush(): Promise<void> {
         await this.withSyncLock(async () => {
-            await this.fileManager.copyFilesToWorkingDir();
-            await this.extensionService.pushExtensions();
+            // await this.fileManager.copyFilesToWorkingDir();
+            await pushExtensions(this.extensionsFile);
             await this.gitService.forcePush();
             log('Force push completed successfully');
         }, 'force push');
@@ -169,32 +198,18 @@ export class SyncService {
     async forcePull(): Promise<void> {
         await this.withSyncLock(async () => {
             await this.gitService.forcePull();
-            await this.fileManager.copyFilesFromWorkingDir();
-            await this.extensionService.pullExtensions();
+            // await this.fileManager.copyFilesFromWorkingDir();
+            await pullExtensions(this.extensionsFile);
             log('Force pull completed successfully');
         }, 'force pull');
     }
 
-    enable(): void {
-        log('Enabling sync service');
-        this.isEnabled = true;
-        this.setupPeriodicSync().catch(error => {
-            log('Error setting up periodic sync:', error);
-            console.error('Failed to setup periodic sync:', error);
-        });
-    }
-
-    disable(): void {
-        log('Disabling sync service');
-        this.isEnabled = false;
-    }
-
     dispose(): void {
         log('Disposing sync service');
-        this.isEnabled = false;
         if (this.syncTimer) {
             clearTimeout(this.syncTimer);
         }
+        this.watcherService.removeOnFileChange(this.onFileChange);
         this.watcherService.dispose();
         log('Sync service disposed');
     }
@@ -204,13 +219,13 @@ export class SyncService {
         
         const extensionWatcher = vscode.extensions.onDidChange(async () => {
             log('Extension change detected');
-            if (!this.isEnabled || !Configuration.shouldSyncExtensions()) {
+            if (!this.enabled || !getConfiguration().shouldSyncExtensions()) {
                 return;
             }
 
             try {
                 log('Extension change detected, pushing to sync file');
-                await this.extensionService.pushExtensions();
+                await pushExtensions(this.extensionsFile);
                 
                 if (await this.gitService.hasChanges()) {
                     log('Changes detected in extensions file, pushing to remote');

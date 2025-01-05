@@ -3,7 +3,9 @@
 import * as vscode from 'vscode';
 import { GitService } from './git/gitService';
 import { SyncService } from './sync/syncService';
-import { ExtensionService } from './sync/extensionService';
+import { WatcherService } from './files/watcherService';
+import { Configuration } from './utils/configuration';
+import { setupOnSettingsChange } from './utils/onSettingsChange';
 
 let syncService: SyncService;
 let statusBarItem: vscode.StatusBarItem;
@@ -11,10 +13,11 @@ let statusBarItem: vscode.StatusBarItem;
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
 export async function activate(context: vscode.ExtensionContext) {
+	const configuration = new Configuration(context);
 	const gitService = new GitService(context);
-	const extensionService = new ExtensionService(gitService.getWorkingDirectory());
-	syncService = new SyncService(context, gitService, extensionService);
-
+	const watcherService = new WatcherService();
+	syncService = new SyncService(context, gitService, watcherService);
+	setupOnSettingsChange(syncService, watcherService);
 	// Create status bar item
 	statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
 	statusBarItem.text = "$(sync) Settings Sync";
@@ -58,8 +61,8 @@ export async function activate(context: vscode.ExtensionContext) {
 			}
 		}),
 		vscode.commands.registerCommand('sync-settings-with-github.toggleSync', () => {
-			syncService.toggleEnabled();
-			vscode.window.showInformationMessage(`Settings sync ${syncService.enabled ? 'enabled' : 'disabled'}`);
+			configuration.setSyncEnabled(!configuration.getSyncEnabled());
+			vscode.window.showInformationMessage(`Settings sync ${configuration.getSyncEnabled() ? 'enabled' : 'disabled'}`);
 		}),
 		vscode.commands.registerCommand('sync-settings-with-github.openRepository', () => {
 			const terminal = vscode.window.createTerminal('Settings Sync');

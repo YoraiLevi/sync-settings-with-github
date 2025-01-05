@@ -2,34 +2,33 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import simpleGit, { SimpleGit } from 'simple-git';
+import { getConfiguration } from '../utils/configuration';
 
 export class GitService {
     private workingDir: string;
     private git: SimpleGit | undefined;
-    private fs: typeof fs;
     private _initialized: boolean = false;
 
-    constructor(context: vscode.ExtensionContext, fsModule: typeof fs = fs) {
-        this.workingDir = path.join(context.globalStoragePath, 'settings-sync');
-        this.fs = fsModule;
+    constructor(context: vscode.ExtensionContext) {
+        this.workingDir = path.join(context.globalStorageUri.fsPath, 'settings-sync');
         console.log('[GitService] GitService initialized with working directory:', this.workingDir);
     }
 
     async initialize(): Promise<void> {
-        const repoUrl = vscode.workspace.getConfiguration('settingsSync').get<string>('repository');
+        const repoUrl = getConfiguration().getRepositoryUrl();
         if (!repoUrl) {
             throw new Error('Repository URL not configured');
         }
 
         // Ensure working directory exists
-        if (!this.fs.existsSync(this.workingDir)) {
+        if (!fs.existsSync(this.workingDir)) {
             console.log('Creating working directory');
-            this.fs.mkdirSync(this.workingDir, { recursive: true });
+            fs.mkdirSync(this.workingDir, { recursive: true });
         }
 
         try {
-            const isRepo = this.fs.existsSync(path.join(this.workingDir, '.git'));
-            
+            const isRepo = fs.existsSync(path.join(this.workingDir, '.git'));
+            const branch = getConfiguration().getRepositoryBranch();
             if (!isRepo) {
                 // Initialize new repository
                 console.log('Initializing new repository');
@@ -41,7 +40,7 @@ export class GitService {
                 console.log('Setting up git in existing repository');
                 this.git = simpleGit(this.workingDir);
             }
-
+            await this.git.checkout(branch);
             this._initialized = true;
         } catch (error) {
             console.error('Failed to initialize git:', error);
@@ -76,6 +75,11 @@ export class GitService {
     async push(): Promise<void> {
         const git = await this.getGit();
         try {
+            if (getConfiguration().getPullBeforePush()) {
+                await git.status();
+                await this.pull();
+                await git.stash(['pop']);
+            }
             const status = await git.status();
             if (!status.isClean()) {
                 await git.add('.');
@@ -102,6 +106,11 @@ export class GitService {
     async forcePush(): Promise<void> {
         const git = await this.getGit();
         try {
+            if (getConfiguration().getPullBeforeForcePush()) {
+                await git.status();
+                await this.pull();
+                await git.stash(['pop']);
+            }
             const status = await git.status();
             if (!status.isClean()) {
                 await git.add('.');
@@ -140,7 +149,7 @@ export class GitService {
     async reinitialize(): Promise<void> {
         try {
             // Delete the existing repository if it exists
-            if (this.fs.existsSync(this.workingDir)) {
+            if (fs.existsSync(this.workingDir)) {
                 console.log('Removing existing repository');
                 await fs.promises.rm(this.workingDir, { recursive: true, force: true });
             }

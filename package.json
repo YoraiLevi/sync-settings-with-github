@@ -52,22 +52,22 @@
     "configuration": {
       "title": "Settings Sync",
       "properties": {
-        "settingsSync.git.repositoryUrl": {
+        "settingsSync.repositoryUrl": {
           "type": "string",
           "default": "",
           "description": "Git repository URL for settings synchronization"
         },
-        "settingsSync.git.branch": {
+        "settingsSync.branch": {
           "type": "string",
           "default": "main",
           "description": "Git branch to use for settings synchronization"
         },
-        "settingsSync.git.pullBeforePush": {
+        "settingsSync.pullBeforePush": {
           "type": "boolean",
           "default": true,
           "description": "Always pull changes before pushing (for non-forced push)"
         },
-        "settingsSync.git.pullBeforeForcePush": {
+        "settingsSync.pullBeforeForcePush": {
           "type": "boolean",
           "default": false,
           "description": "Pull changes before force pushing (might still be overwritten)"
@@ -93,32 +93,22 @@
           "description": "Delay in seconds before syncing after a change"
         },
         "settingsSync.files": {
-          "type": "object",
-          "default": {
-            "patterns": [
-              "settings.json",
-              "keybindings.json",
-              "snippets/**/*.code-snippets",
-              "globalStorage/storage.json"
-            ],
-            "excludePatterns": []
-          },
-          "properties": {
-            "patterns": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "description": "Glob patterns for files to sync (relative to user settings directory)"
+          "type": "array",
+          "default": [
+            {
+              "baseDir": "settings",
+              "patterns": [
+                "settings.json",
+                "keybindings.json",
+                "snippets/**/*.code-snippets",
+                "globalStorage/storage.json"
+              ],
+              "conditions": {
+                "OS": "Windows_NT"
             },
-            "excludePatterns": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "description": "Glob patterns for files to exclude from sync (relative to user settings directory)"
+              "excludePatterns": []
             }
-          },
+          ],
           "description": "Configuration for which files to sync"
         },
         "settingsSync.extensions.sync": {
@@ -145,18 +135,19 @@
   "devDependencies": {
     "@types/mocha": "^10.0.10",
     "@types/node": "20.x",
+    "@types/sinon": "^17.0.3",
     "@types/vscode": "^1.93.0",
     "@typescript-eslint/eslint-plugin": "^8.17.0",
     "@typescript-eslint/parser": "^8.17.0",
     "@vscode/test-cli": "^0.0.10",
     "@vscode/test-electron": "^2.4.1",
     "eslint": "^9.16.0",
-    "typescript": "^5.7.2",
-    "@types/sinon": "^17.0.3",
-    "sinon": "^19.0.2"
+    "sinon": "^19.0.2",
+    "typescript": "^5.7.2"
   },
   "dependencies": {
     "fast-glob": "^3.3.2",
-    "simple-git": "^3.27.0"
+    "simple-git": "^3.27.0",
+    "vscode-variables": "^1.0.1"
   }
 }
