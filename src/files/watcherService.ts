@@ -1,93 +1,162 @@
 import * as vscode from 'vscode';
-import { getConfiguration } from '../utils/configuration';
+import { getConfiguration, FilePattern } from '../utils/configuration';
+import { resolveVSCodeVariables } from '../utils/pathUtils';
+import { GlobPattern } from 'vscode';
 
 function log(message: string, ...args: any[]) {
     console.log(`[WatcherService] ${message}`, ...args);
 }
+export type OnFilesChangedCallback = (uris: Array<vscode.Uri>) => Promise<void>;
 
+interface IWatchedPatternRelatedObjects {
+    watchers: vscode.Disposable[];
+    changedUris: Set<string>;
+    onFilesChangedCallbacks: Array<OnFilesChangedCallback>;
+}
 export class WatcherService {
-    private disposables: vscode.Disposable[] = [];
+    private watchedPatterns: Map<GlobPattern, IWatchedPatternRelatedObjects> = new Map();
     private debounceTimer: NodeJS.Timeout | undefined;
-    private onFileChange: Array<(uris: Array<vscode.Uri>) => Promise<void>> = [];
-    private changedUris: Set<string> = new Set();
-    constructor() {}
-    
+
+    constructor() { }
+
     public get debounceDelay(): number {
         return getConfiguration().getDebounceDelay();
     }
-    
-    public listenOnFileChange(onFileChange: (uris: Array<vscode.Uri>) => Promise<void>): (uris: Array<vscode.Uri>) => Promise<void> {
-        this.onFileChange.push(onFileChange);
+
+    public addPatternOnFilesChangedCallback(pattern: GlobPattern, onFileChange: OnFilesChangedCallback): OnFilesChangedCallback {
+        if (!this.watchedPatterns.has(pattern)) {
+            this.watchedPatterns.set(pattern, {
+                watchers: [],
+                changedUris: new Set(),
+                onFilesChangedCallbacks: []
+            });
+        }
+        this.watchedPatterns.get(pattern)?.onFilesChangedCallbacks.push(onFileChange);
+        log('Total callbacks for pattern:', pattern, 'is now:', this.watchedPatterns.get(pattern)?.onFilesChangedCallbacks.length);
         return onFileChange;
     }
 
-    public removeOnFileChange(onFileChange: (uris: Array<vscode.Uri>) => Promise<void>): void {
-        this.onFileChange = this.onFileChange.filter(fn => fn !== onFileChange);
+    public removePatternOnFilesChangedCallback(pattern: GlobPattern, onFileChange: OnFilesChangedCallback): void {
+        const patternData = this.watchedPatterns.get(pattern);
+        if (patternData) {
+            const beforeLength = patternData.onFilesChangedCallbacks.length;
+            patternData.onFilesChangedCallbacks = patternData.onFilesChangedCallbacks.filter(fn => fn !== onFileChange);
+            log('Removed callbacks:', beforeLength - patternData.onFilesChangedCallbacks.length);
+        } else {
+            log('No pattern data found for:', pattern);
+        }
     }
 
-    public watchPatterns(patterns: vscode.GlobPattern[]): void {
-        log('Setting up file watcher');
+    public clearAllPatternOnFilesChangedCallbacks(pattern: GlobPattern): void {
+        log('Clearing all callbacks for pattern:', pattern);
+        const callbacks = this.watchedPatterns.get(pattern)?.onFilesChangedCallbacks.length || 0;
+        this.watchedPatterns.get(pattern)?.onFilesChangedCallbacks.forEach(callback => this.removePatternOnFilesChangedCallback(pattern, callback));
+        log('Cleared callbacks count:', callbacks);
+    }
 
-        for (const pattern of patterns) {
-            log(`Setting up watcher for pattern: ${pattern}`);
-            try {
-                const watcher = vscode.workspace.createFileSystemWatcher(
-                    pattern,
-                    false, // Don't ignore create events
-                    false, // Don't ignore change events
-                    false  // Don't ignore delete events
-                );
+    public unregisterPattern(pattern: GlobPattern): void {
+        log('Unregistering pattern:', pattern);
+        this.clearWatchers(pattern);
+        this.watchedPatterns.delete(pattern);
+        log('Pattern unregistered:', pattern);
+    }
 
-                watcher.onDidChange(uri => this.handleFileChange(uri));
-                watcher.onDidCreate(uri => this.handleFileChange(uri));
-                watcher.onDidDelete(uri => this.handleFileChange(uri));
-
-                this.disposables.push(watcher);
-                log(`Watcher created successfully for pattern: ${pattern}`);
-            } catch (error) {
-                log(`Error setting up watcher for pattern ${pattern}:`, error);
-            }
+    public clearWatchers(pattern: GlobPattern) {
+        log('Clearing watchers for pattern:', pattern);
+        const patternData = this.watchedPatterns.get(pattern);
+        if (patternData) {
+            log('Found', patternData.watchers.length, 'watchers to dispose');
+            patternData.watchers.forEach(watcher => watcher.dispose());
+            patternData.watchers = [];
+            log('All watchers cleared for pattern:', pattern);
+        } else {
+            log('No watchers found for pattern:', pattern);
         }
+    }
 
-        log('File watcher setup complete');
+    public registerGlobPattern(pattern: GlobPattern, onFilesChangedCallbacks: Array<OnFilesChangedCallback>): void {
+        log('Registering new glob pattern:', pattern, 'with', onFilesChangedCallbacks.length, 'callbacks');
+        const watcher = vscode.workspace.createFileSystemWatcher(pattern);
+        watcher.onDidChange((uri) => this.handleFileChange(pattern, uri));
+        watcher.onDidCreate((uri) => this.handleFileChange(pattern, uri));
+        watcher.onDidDelete((uri) => this.handleFileChange(pattern, uri));
+        if (!this.watchedPatterns.has(pattern)) {
+            this.watchedPatterns.set(pattern, {
+                watchers: [],
+                changedUris: new Set(),
+                onFilesChangedCallbacks: []
+            });
+        }
+        this.watchedPatterns.get(pattern)?.watchers.push(watcher);
+        for (const callback of onFilesChangedCallbacks) {
+            this.addPatternOnFilesChangedCallback(pattern, callback);
+        }
     }
 
     public clearAllWatchers(): void {
         log('Clearing all watchers');
-        this.onFileChange = [];
-        this.disposables.forEach(d => d.dispose());
-        this.disposables = [];
+        this.watchedPatterns.forEach((patternData, pattern) => {
+            this.unregisterPattern(pattern);
+        });
+        this.watchedPatterns.clear();
         this.stopDebounceTimer();
     }
-    
-    clearChangedUris(): void {
-        this.changedUris.clear();
+
+    clearChangedUris(pattern?: GlobPattern): void {
+        if (pattern) {
+            this.watchedPatterns.get(pattern)?.changedUris.clear();
+        } else {
+            this.watchedPatterns.forEach(patternData => {
+                patternData.changedUris.clear();
+            });
+        }
     }
-
-    handleFileChange(uri: vscode.Uri): void {
-        log('Debounce delay:', this.debounceDelay);
-        this.stopDebounceTimer();
-        
-        log('File change detected:', uri.fsPath);
-        this.changedUris.add(uri.fsPath);
-        
-
-        this.debounceTimer = setTimeout(async () => {
-            log('Debounce timer expired, handling file change');
+    private async processFileChanges() {
+        for (const pattern of this.watchedPatterns.keys()) {
             try {
-                const uris = Array.from(this.changedUris).map(uri => vscode.Uri.file(uri));
-                for (const onFileChange of this.onFileChange) {
-                    await onFileChange(uris);
+                const uris = Array.from(this.watchedPatterns.get(pattern)?.changedUris || []);
+                if (uris.length > 0) {
+                    log('Processing', uris.length, 'changed files', 'for pattern:', pattern);
+                    const callbacks = this.watchedPatterns.get(pattern)?.onFilesChangedCallbacks || [];
+                    log('Executing', callbacks.length, 'callbacks', 'for pattern:', pattern);
+
+                    for (const listener of callbacks) {
+                        log('Executing callback for', uris.length, 'files', 'for pattern:', pattern);
+                        await listener(uris.map(uri => vscode.Uri.file(uri)));
+                    }
+                    log('All callbacks executed successfully', 'for pattern:', pattern);
                 }
             } catch (error) {
-                log('Error handling file change:', error);
+                log('Error processing file changes:', error, 'for pattern:', pattern);
+                console.error(error);
+            } finally {
+                log('Clearing changed URIs for pattern:', pattern);
+                this.clearChangedUris(pattern);
             }
+        }
+    }
+    private handleFileChange(pattern: GlobPattern, uri: vscode.Uri): void {
+        log('File change detected for pattern:', pattern);
+        log('Changed file:', uri.fsPath);
+        log('Current debounce delay:', this.debounceDelay);
+
+        this.stopDebounceTimer();
+
+        const patternData = this.watchedPatterns.get(pattern);
+        const previousChanges = patternData?.changedUris.size || 0;
+        patternData?.changedUris.add(uri.fsPath);
+        log('Total pending changes:', patternData?.changedUris.size, '(added from', previousChanges, ')');
+
+        this.debounceTimer = setTimeout(async () => {
+            log('Debounce timer expired, processing changes');
+            try {
+                await this.processFileChanges();
+            } catch (error) { throw error; }
             finally {
-                this.clearChangedUris();
                 this.stopDebounceTimer();
+                log('Finished processing file changes');
             }
         }, this.debounceDelay);
-
     }
 
     public stopDebounceTimer(): void {
@@ -97,8 +166,8 @@ export class WatcherService {
             this.debounceTimer = undefined;
         }
     }
-    
-    dispose(): void {
+
+    public dispose(): void {
         log('Disposing watchers');
         this.clearAllWatchers();
         log('Watchers disposed');

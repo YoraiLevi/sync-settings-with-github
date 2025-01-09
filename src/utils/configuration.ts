@@ -1,10 +1,14 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
-interface FilePattern {
+import { resolveVSCodeVariables } from './pathUtils';
+import path from 'path';
+export interface FilePattern {
     baseDir: string;
+    remoteDir: string;
     patterns: string[];
-    excludePatterns: string[];
-    conditions: { [key: string]: string };
+    excludePatterns?: string[];
+    conditions?: { [key: string]: string };
+
 }
 export class Configuration {
     static instance: Configuration;
@@ -14,76 +18,112 @@ export class Configuration {
         }
         return Configuration.instance;
     }
-
-    public getFilePatterns(): FilePattern[] {
-        const config = vscode.workspace.getConfiguration('settingsSync');
-        return config.get<FilePattern[]>('files', []);
-    }
-
-    public getUserSettingsPath(): vscode.Uri {
+    public getContext(): vscode.ExtensionContext {
         if (!this.context) {
             throw new Error('[Configuration] Context is not initialized');
         }
-        return vscode.Uri.file(fs.realpathSync(this.context.globalStorageUri.fsPath + "/../../"));
+        return this.context;
+    }
+    public getRootConfiguration() {
+        return vscode.workspace.getConfiguration('settingsSync');
+    }
+    public getFilePatterns(): FilePattern[] {
+        const config = this.getRootConfiguration();
+        let files = config.get<FilePattern[]>('files', []);
+        files = files.filter(entry => {
+            let conditions = entry.conditions || {};
+            if (entry.conditions && typeof entry.conditions !== typeof ({})) {
+                throw new Error('Conditions are not an object');
+            }
+            if (entry.conditions) {
+                const allConditionsMet = Object.keys(conditions).reduce((result: boolean, condition: string) => {
+                    return result && (process.env[condition] === conditions[condition]);
+                }, true);
+                return allConditionsMet;
+            }
+            return true;
+        });
+        
+        for (let file of files) {
+            if (!file.baseDir) {
+                file.baseDir = this.getUserSettingsPath().fsPath;
+            }
+            if (!file.remoteDir) {
+                file.remoteDir = './';
+            }
+            file.baseDir = resolveVSCodeVariables(file.baseDir);
+            file.remoteDir = path.join(this.getRepositoryPath().fsPath, resolveVSCodeVariables(file.remoteDir));
+        }
+        return files;
+    }
+    public getGlobalStoragePath(): vscode.Uri {
+        let context = this.getContext();
+        return context.globalStorageUri;
+    }
+    public getUserSettingsPath(): vscode.Uri {
+        return vscode.Uri.file(fs.realpathSync(this.getGlobalStoragePath().fsPath + "/../../"));
     }
 
-    public getRepositoryUrl(): string | undefined {
-        const config = vscode.workspace.getConfiguration('settingsSync');
-        return config.get<string | undefined>('repositoryUrl');
+    public getRepositoryPath(): vscode.Uri {
+        return vscode.Uri.file(path.join(this.getGlobalStoragePath().fsPath, 'repository'));
+    }
+    public getRepositoryUrl(): string {
+        const config = this.getRootConfiguration();
+        return config.get<string>('repositoryUrl', '');
     }
 
     public getRepositoryBranch(): string {
-        const config = vscode.workspace.getConfiguration('settingsSync');
+        const config = this.getRootConfiguration();
         return config.get<string>('branch', 'main');
     }
 
     public getPullBeforePush(): boolean {
-        const config = vscode.workspace.getConfiguration('settingsSync');
+        const config = this.getRootConfiguration();
         return config.get<boolean>('pullBeforePush', true);
     }
 
     public getPullBeforeForcePush(): boolean {
-        const config = vscode.workspace.getConfiguration('settingsSync');
+        const config = this.getRootConfiguration();
         return config.get<boolean>('pullBeforeForcePush', false);
     }
 
     public getSyncEnabled(): boolean {
-        const config = vscode.workspace.getConfiguration('settingsSync');
+        const config = this.getRootConfiguration();
         return config.get<boolean>('syncEnabled', true);
     }
 
     public setSyncEnabled(enabled: boolean): void {
-        const config = vscode.workspace.getConfiguration('settingsSync');
+        const config = this.getRootConfiguration();
         config.update('syncEnabled', enabled);
     }
 
     public getSyncInterval(): number {
-        const config = vscode.workspace.getConfiguration('settingsSync');
+        const config = this.getRootConfiguration();
         return config.get<number>('syncInterval', 300) * 1000; // Convert to milliseconds
     }
 
     public getDebounceDelay(): number {
-        const config = vscode.workspace.getConfiguration('settingsSync');
+        const config = this.getRootConfiguration();
         return config.get<number>('debounceDelay', 5) * 1000; // Convert to milliseconds
     }
 
     public shouldPullOnLaunch(): boolean {
-        const config = vscode.workspace.getConfiguration('settingsSync');
+        const config = this.getRootConfiguration();
         return config.get<boolean>('pullOnLaunch', true);
     }
 
     public shouldSyncExtensions(): boolean {
-        const config = vscode.workspace.getConfiguration('settingsSync');
+        const config = this.getRootConfiguration();
         return config.get<boolean>('extensions.sync', true);
     }
 
     public shouldAutoRemoveExtensions(): boolean {
-        const config = vscode.workspace.getConfiguration('settingsSync');
+        const config = this.getRootConfiguration();
         return config.get<boolean>('extensions.autoRemove', false);
     }
 
     public isAutoSyncEnabled(): boolean {
-        const config = vscode.workspace.getConfiguration('settingsSync');
+        const config = this.getRootConfiguration();
         return config.get<boolean>('autoSync', true);
     }
 

@@ -5,7 +5,6 @@ import { GitService } from './git/gitService';
 import { SyncService } from './sync/syncService';
 import { WatcherService } from './files/watcherService';
 import { Configuration } from './utils/configuration';
-import { setupOnSettingsChange } from './utils/onSettingsChange';
 
 let syncService: SyncService;
 let statusBarItem: vscode.StatusBarItem;
@@ -14,10 +13,9 @@ let statusBarItem: vscode.StatusBarItem;
 // Your extension is activated the very first time the command is executed
 export async function activate(context: vscode.ExtensionContext) {
 	const configuration = new Configuration(context);
-	const gitService = new GitService(context);
+	const gitService = new GitService();
 	const watcherService = new WatcherService();
-	syncService = new SyncService(context, gitService, watcherService);
-	setupOnSettingsChange(syncService, watcherService);
+	syncService = new SyncService(gitService, watcherService);
 	// Create status bar item
 	statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
 	statusBarItem.text = "$(sync) Settings Sync";

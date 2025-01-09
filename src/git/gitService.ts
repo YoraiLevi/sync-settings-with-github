@@ -9,8 +9,8 @@ export class GitService {
     private git: SimpleGit | undefined;
     private _initialized: boolean = false;
 
-    constructor(context: vscode.ExtensionContext) {
-        this.workingDir = path.join(context.globalStorageUri.fsPath, 'settings-sync');
+    constructor() {
+        this.workingDir = getConfiguration().getRepositoryPath().fsPath;
         console.log('[GitService] GitService initialized with working directory:', this.workingDir);
     }
 
@@ -29,18 +29,19 @@ export class GitService {
         try {
             const isRepo = fs.existsSync(path.join(this.workingDir, '.git'));
             const branch = getConfiguration().getRepositoryBranch();
+            this.git = simpleGit(this.workingDir);
             if (!isRepo) {
                 // Initialize new repository
                 console.log('Initializing new repository');
-                this.git = simpleGit(this.workingDir);
                 await this.git.init();
                 await this.git.addRemote('origin', repoUrl);
-            } else {
-                // Set up git in the working directory
-                console.log('Setting up git in existing repository');
-                this.git = simpleGit(this.workingDir);
+                try {
+                    await this.git.pull(['origin', branch]);
+                } catch (error) {
+                    await this.git.checkout(['-b', branch]);
+                }
             }
-            await this.git.checkout(branch);
+            // await this.git.checkout(branch);
             this._initialized = true;
         } catch (error) {
             console.error('Failed to initialize git:', error);
@@ -74,9 +75,10 @@ export class GitService {
 
     async push(): Promise<void> {
         const git = await this.getGit();
+        const branch = getConfiguration().getRepositoryBranch();
         try {
             if (getConfiguration().getPullBeforePush()) {
-                await git.status();
+                await git.stash();
                 await this.pull();
                 await git.stash(['pop']);
             }
@@ -85,7 +87,7 @@ export class GitService {
                 await git.add('.');
                 await git.commit('Update settings');
                 try {
-                    await git.push();
+                    await git.push(['origin', branch]);
                 } catch (error) {
                     console.error('Failed to push changes:', error);
                     // Try to undo the commit
@@ -105,9 +107,10 @@ export class GitService {
 
     async forcePush(): Promise<void> {
         const git = await this.getGit();
+        const branch = getConfiguration().getRepositoryBranch();
         try {
             if (getConfiguration().getPullBeforeForcePush()) {
-                await git.status();
+                await git.stash();
                 await this.pull();
                 await git.stash(['pop']);
             }
@@ -115,7 +118,7 @@ export class GitService {
             if (!status.isClean()) {
                 await git.add('.');
                 await git.commit('Force update settings');
-                await git.push(['-f']);
+                await git.push(['-f', 'origin', branch]);
             }
         } catch (error) {
             console.error('Failed to force push changes:', error);

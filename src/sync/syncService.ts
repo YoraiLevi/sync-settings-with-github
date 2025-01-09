@@ -1,11 +1,11 @@
 import * as vscode from 'vscode';
 import { GitService } from '../git/gitService';
-import { WatcherService } from '../files/watcherService';
-import { getConfiguration } from '../utils/configuration';
+import { OnFilesChangedCallback, WatcherService } from '../files/watcherService';
+import { FilePattern, getConfiguration } from '../utils/configuration';
 import { pullExtensions, pushExtensions } from '../utils/extensionUtils';
 import * as fs from 'fs';
 import path from 'path';
-import { resolveVSCodeVariables } from '../utils/pathUtils';
+import { copyFile, getFiles, resolveVSCodeVariables } from '../utils/pathUtils';
 function log(message: string, ...args: any[]) {
     console.log(`[SyncService] ${message}`, ...args);
 }
@@ -13,30 +13,29 @@ function log(message: string, ...args: any[]) {
 export class SyncService {
     private syncTimer: NodeJS.Timeout | undefined;
     private extensionsFile: string;
-    private onFileChange: (uris: Array<vscode.Uri>) => Promise<void>;
+    private extensionWatcherListener: vscode.Disposable | undefined;
     constructor(
-        private context: vscode.ExtensionContext,
         private gitService: GitService,
         private watcherService: WatcherService,
     ) {
-        this.extensionsFile = this.context.globalStorageUri.fsPath + '/extensions.json';
-        this.onFileChange = this.watcherService.listenOnFileChange(this.handleFileChange.bind(this));
+        this.extensionsFile = getConfiguration().getContext().globalStorageUri.fsPath + '/extensions.json';
+        getConfiguration().getContext().subscriptions.push(this);
+
         this.initialize();
     }
 
     public get enabled(): boolean {
         return getConfiguration().getSyncEnabled();
     }
-
     async initialize(): Promise<void> {
         log('Initializing sync service');
         await this.gitService.initialize();
-        
+
         if (getConfiguration().shouldPullOnLaunch()) {
             try {
                 log('Performing initial pull of settings');
                 await this.gitService.pull();
-                
+
                 const hasRemoteChanges = await this.gitService.hasChanges();
                 if (hasRemoteChanges) {
                     log('Remote changes detected, copying to settings directory');
@@ -50,47 +49,54 @@ export class SyncService {
                 log('Error during initial pull:', error);
             }
         }
-        
         await this.setupWatchers();
-        await this.setupExtensionWatcher();
         log('Sync service initialized successfully');
     }
 
+    public setupSettingsFileWatcher = () => {
+        const settingsFsPath = getConfiguration().getUserSettingsPath();
+        const globPattern = new vscode.RelativePattern(settingsFsPath, 'settings.json');
+        const onSettingsChange = async (uris: Array<vscode.Uri>) => {
+            if (uris.length === 0) {
+                return;
+            }
+            console.log('Settings changed', uris);
+            await this.teardownWatchers();
+            await this.setupWatchers();
+        };
+        this.watcherService.registerGlobPattern(globPattern, [onSettingsChange]);
+    };
+
     public async setupWatchers() {
+        await this.setupExtensionWatcher();
         await this.setupFileWatcher();
         await this.setupPeriodicSync();
+        await this.setupSettingsFileWatcher();
     }
 
     public async teardownWatchers() {
         await this.teardownFileWatcher();
         await this.teardownPeriodicSync();
+        if (this.extensionWatcherListener) {
+            this.extensionWatcherListener.dispose();
+            this.extensionWatcherListener = undefined;
+        }
     }
 
     private async setupFileWatcher() {
         for (const entry of getConfiguration().getFilePatterns()) {
-
-            let conditions = entry.conditions || {};
-            if (entry.conditions && typeof entry.conditions !== typeof ({})) {
-                throw new Error('Conditions are not an object');
+            const globs = entry.patterns.map(pattern => new vscode.RelativePattern(entry.baseDir, pattern));
+            log('Watching patterns:', globs);
+            const callback: OnFilesChangedCallback = async (uris: Array<vscode.Uri>) => {
+                await this.handleFileChange(entry, uris);
+            };
+            for (const glob of globs) {
+                this.watcherService.registerGlobPattern(glob, [callback]);
             }
-            if (entry.conditions) {
-                const allConditionsMet = Object.keys(conditions).reduce((result: boolean, condition: string) => {
-                    return result && (process.env[condition] === conditions[condition]);
-                }, true);
-                if (!allConditionsMet) {
-                    continue;
-                }
-            }
-
-            let baseDir = entry.baseDir ? vscode.Uri.file(resolveVSCodeVariables(entry.baseDir)) : getConfiguration().getUserSettingsPath();
-            const patterns = entry.patterns.map(pattern => new vscode.RelativePattern(baseDir, pattern));
-            log('Watching patterns:', patterns);
-            await this.watcherService.watchPatterns(patterns);
         }
     }
     private teardownFileWatcher() {
         this.watcherService.clearAllWatchers();
-        this.onFileChange = async (uris: Array<vscode.Uri>) => {};
     }
 
     private async setupPeriodicSync(): Promise<void> {
@@ -119,10 +125,14 @@ export class SyncService {
         }
     }
 
-    private async handleFileChange(uris: Array<vscode.Uri>): Promise<void> {
+    private async handleFileChange(entry: FilePattern, uris: Array<vscode.Uri>): Promise<void> {
         try {
             log('File change detected:', uris);
-            // await this.fileManager.copyFilesToWorkingDir();
+            for (const uri of uris) {
+                const relativePath = path.relative(entry.baseDir, uri.fsPath);
+                const remotePath = path.join(entry.remoteDir, relativePath);
+                fs.copyFileSync(uri.fsPath, remotePath);
+            }
             if (await this.gitService.hasChanges()) {
                 log('Changes detected, syncing');
                 await this.sync();
@@ -154,9 +164,26 @@ export class SyncService {
             throw new Error(errorMessage);
         }
     }
-
+    private async copyFilesToRepository(){
+        for (const entry of getConfiguration().getFilePatterns()) {
+            const files = await getFiles(entry, entry.baseDir);
+            for (const file of files) {
+                log('Copying file to repository:', file);
+                await copyFile(file, path.join(entry.remoteDir, path.relative(entry.baseDir, file)));
+            }
+        }
+    }
+    private async copyFilesFromRepository(){
+        for (const entry of getConfiguration().getFilePatterns()) {
+            const files = await getFiles(entry, entry.remoteDir);
+            for (const file of files) {
+                log('Copying file from repository:', file);
+                await copyFile(file, path.join(entry.baseDir, path.relative(entry.remoteDir, file)));
+            }
+        }
+    }
     private async pushChanges(): Promise<void> {
-        // await this.fileManager.copyFilesToWorkingDir();
+        await this.copyFilesToRepository();
         await pushExtensions(this.extensionsFile);
         await this.gitService.push();
     }
@@ -166,14 +193,14 @@ export class SyncService {
         const hasRemoteChanges = await this.gitService.hasChanges();
         if (hasRemoteChanges) {
             await pullExtensions(this.extensionsFile);
-            // await this.fileManager.copyFilesFromWorkingDir();
+            await this.copyFilesFromRepository();
         }
     }
 
     async sync(): Promise<void> {
         await this.withSyncLock(async () => {
             const hasLocalChanges = await this.gitService.hasChanges();
-            
+
             if (hasLocalChanges) {
                 log('Local changes detected, preparing to push');
                 await this.pushChanges();
@@ -181,14 +208,14 @@ export class SyncService {
                 log('No local changes, pulling from remote');
                 await this.pullChanges();
             }
-            
+
             log('Sync completed successfully');
         }, 'sync');
     }
 
     async forcePush(): Promise<void> {
         await this.withSyncLock(async () => {
-            // await this.fileManager.copyFilesToWorkingDir();
+            await this.copyFilesToRepository();
             await pushExtensions(this.extensionsFile);
             await this.gitService.forcePush();
             log('Force push completed successfully');
@@ -198,8 +225,8 @@ export class SyncService {
     async forcePull(): Promise<void> {
         await this.withSyncLock(async () => {
             await this.gitService.forcePull();
-            // await this.fileManager.copyFilesFromWorkingDir();
             await pullExtensions(this.extensionsFile);
+            await this.copyFilesFromRepository();
             log('Force pull completed successfully');
         }, 'force pull');
     }
@@ -209,15 +236,18 @@ export class SyncService {
         if (this.syncTimer) {
             clearTimeout(this.syncTimer);
         }
-        this.watcherService.removeOnFileChange(this.onFileChange);
+        this.teardownWatchers();
         this.watcherService.dispose();
         log('Sync service disposed');
     }
 
     private async setupExtensionWatcher(): Promise<void> {
         log('Setting up extension watcher');
-        
-        const extensionWatcher = vscode.extensions.onDidChange(async () => {
+        if (this.extensionWatcherListener) {
+            return;
+        }
+
+        this.extensionWatcherListener = vscode.extensions.onDidChange(async () => {
             log('Extension change detected');
             if (!this.enabled || !getConfiguration().shouldSyncExtensions()) {
                 return;
@@ -226,7 +256,7 @@ export class SyncService {
             try {
                 log('Extension change detected, pushing to sync file');
                 await pushExtensions(this.extensionsFile);
-                
+
                 if (await this.gitService.hasChanges()) {
                     log('Changes detected in extensions file, pushing to remote');
                     await this.gitService.push();
@@ -239,7 +269,6 @@ export class SyncService {
             }
         });
 
-        this.context.subscriptions.push(extensionWatcher);
         log('Extension watcher setup complete');
     }
 } 
