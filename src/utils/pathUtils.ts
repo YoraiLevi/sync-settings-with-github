@@ -4,6 +4,13 @@ const vscodeVariables = require('vscode-variables');
 import * as vscode from 'vscode';
 import fg from 'fast-glob';
 import * as fs from 'fs';
+import { createLogger, LogLevel } from './logUtils';
+
+const log = createLogger({
+    serviceName: 'PathUtils',
+    minLevel: LogLevel.INFO
+});
+
 export function getVSCodeSettingsPath(platform: NodeJS.Platform): string {
     switch (platform) {
         case 'win32':
@@ -16,18 +23,22 @@ export function getVSCodeSettingsPath(platform: NodeJS.Platform): string {
             throw new Error(`Unsupported platform: ${platform}`);
     }
 }
+
 export function resolveVSCodeVariables(path: string): string {
     // https://code.visualstudio.com/docs/editor/variables-reference
     path = path.replace("~", "${userHome}");
     let resolvedPath = vscodeVariables(path);
     resolvedPath = resolvedPath.replace(/\${userSettings}/g, getConfiguration().getUserSettingsPath().fsPath); // added ${userSettings} special variable
     resolvedPath = resolvedPath.replace(/\${globalStorage}/g, getConfiguration().getGlobalStoragePath().fsPath); // added ${globalStorage} special variable
-    console.log("[resolveVSCodeVariables] Resolved path: ", path, resolvedPath);
+    log.debug("Resolved path: ", path, resolvedPath);
     if (resolvedPath.includes("${")) {
-        throw new Error("Unresolved variables in path: " + path);
+        const error = "Unresolved variables in path: " + path;
+        log.error(error);
+        throw new Error(error);
     }
     return resolvedPath;
 }
+
 export function getFiles(filePattern: FilePattern, baseDir: string): Promise<string[]> {
     return fg(filePattern.patterns, {
         cwd: baseDir,
@@ -40,17 +51,17 @@ export function getFiles(filePattern: FilePattern, baseDir: string): Promise<str
 
 export async function copyFile(source: string, target: string): Promise<void> {
     try {
-        console.log('Copying file:', { source, target });
+        log.debug('Copying file:', { source, target });
         if (fs.existsSync(source)) {
             await fs.promises.mkdir(path.dirname(target), { recursive: true });
             await fs.promises.copyFile(source, target);
-            console.log('File copied successfully');
+            log.debug('File copied successfully');
         } else {
-            console.log('Source file does not exist:', source);
+            log.warn('Source file does not exist:', source);
         }
     } catch (error) {
         const errorMessage = `Failed to copy file ${source} to ${target}: ${error instanceof Error ? error.message : String(error)}`;
-        console.log('Error copying file:', errorMessage);
+        log.error('Error copying file:', errorMessage);
         throw new Error(errorMessage);
     }
 }

@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import { resolveVSCodeVariables } from './pathUtils';
-import path from 'path';
+import * as path from 'path';
 export interface FilePattern {
     baseDir: string;
     remoteDir: string;
@@ -11,7 +11,7 @@ export interface FilePattern {
 
 }
 export class Configuration {
-    static instance: Configuration;
+    static instance: Configuration | null = null; // explicitly set to null to make it possible to mock in tests, sinon.replace complains of undefined and sinon.define complains of already defined
     constructor(private context: vscode.ExtensionContext) {
         if (!Configuration.instance) {
             Configuration.instance = this;
@@ -26,6 +26,11 @@ export class Configuration {
     }
     public getRootConfiguration() {
         return vscode.workspace.getConfiguration('settingsSync');
+    }
+    public getExtensionFileRemoteDir(): string {
+        const config = this.getRootConfiguration();
+        const remoteDir = config.get<string>('extensions.remoteDir', './');
+        return remoteDir;
     }
     public getFilePatterns(): FilePattern[] {
         const config = this.getRootConfiguration();
@@ -43,7 +48,7 @@ export class Configuration {
             }
             return true;
         });
-        
+
         for (let file of files) {
             if (!file.baseDir) {
                 file.baseDir = this.getUserSettingsPath().fsPath;

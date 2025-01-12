@@ -1,10 +1,16 @@
 // The module 'vscode' contains the VS Code extensibility API
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
-import { GitService } from './git/gitService';
-import { SyncService } from './sync/syncService';
-import { WatcherService } from './files/watcherService';
+import { GitService } from './gitService';
+import { SyncService } from './syncService';
+import { WatcherService } from './watcherService';
 import { Configuration } from './utils/configuration';
+import { createLogger, LogLevel } from './utils/logUtils';
+
+const log = createLogger({
+    serviceName: 'Extension',
+    minLevel: LogLevel.INFO
+});
 
 let syncService: SyncService;
 let statusBarItem: vscode.StatusBarItem;
@@ -12,79 +18,87 @@ let statusBarItem: vscode.StatusBarItem;
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
 export async function activate(context: vscode.ExtensionContext) {
-	const configuration = new Configuration(context);
-	const gitService = new GitService();
-	const watcherService = new WatcherService();
-	syncService = new SyncService(gitService, watcherService);
-	// Create status bar item
-	statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-	statusBarItem.text = "$(sync) Settings Sync";
-	statusBarItem.tooltip = "Click to manage settings sync";
-	statusBarItem.command = 'sync-settings-with-github.toggleSync';
-	statusBarItem.show();
-	context.subscriptions.push(statusBarItem);
+    return;
+    log.info('Activating extension');
 
-	// Register commands
-	context.subscriptions.push(
-		vscode.commands.registerCommand('sync-settings-with-github.initialize', async () => {
-			try {
-				await syncService.initialize();
-				vscode.window.showInformationMessage('Settings sync initialized successfully');
-			} catch (error) {
-				vscode.window.showErrorMessage(`Failed to initialize settings sync: ${error}`);
-			}
-		}),
-		vscode.commands.registerCommand('sync-settings-with-github.forcePush', async () => {
-			try {
-				await syncService.forcePush();
-				vscode.window.showInformationMessage('Settings force pushed successfully');
-			} catch (error) {
-				vscode.window.showErrorMessage(`Failed to force push settings: ${error}`);
-			}
-		}),
-		vscode.commands.registerCommand('sync-settings-with-github.forcePull', async () => {
-			try {
-				await syncService.forcePull();
-				vscode.window.showInformationMessage('Settings force pulled successfully');
-			} catch (error) {
-				vscode.window.showErrorMessage(`Failed to force pull settings: ${error}`);
-			}
-		}),
-		vscode.commands.registerCommand('sync-settings-with-github.sync', async () => {
-			try {
-				await syncService.sync();
-				vscode.window.showInformationMessage('Settings synced successfully');
-			} catch (error) {
-				vscode.window.showErrorMessage(`Failed to sync settings: ${error}`);
-			}
-		}),
-		vscode.commands.registerCommand('sync-settings-with-github.toggleSync', () => {
-			configuration.setSyncEnabled(!configuration.getSyncEnabled());
-			vscode.window.showInformationMessage(`Settings sync ${configuration.getSyncEnabled() ? 'enabled' : 'disabled'}`);
-		}),
-		vscode.commands.registerCommand('sync-settings-with-github.openRepository', () => {
-			const terminal = vscode.window.createTerminal('Settings Sync');
-			terminal.sendText(`code ${gitService.getWorkingDirectory()}`);
-			terminal.show();
-		}),
-		vscode.commands.registerCommand('sync-settings-with-github.reinitialize', async () => {
-			try {
-				await gitService.reinitialize();
-				await syncService.initialize();
-				vscode.window.showInformationMessage('Settings sync reinitialized successfully');
-			} catch (error) {
-				vscode.window.showErrorMessage(`Failed to reinitialize settings sync: ${error}`);
-			}
-		})
-	);
+    const configuration = new Configuration(context);
+    const gitService = new GitService();
+    const watcherService = new WatcherService();
+    syncService = new SyncService(gitService, watcherService);
+
+    // Create status bar item
+    log.debug('Creating status bar item');
+    statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+    statusBarItem.text = "$(sync) Settings Sync";
+    statusBarItem.tooltip = "Click to manage settings sync";
+    statusBarItem.command = 'sync-settings-with-github.toggleSync';
+    statusBarItem.show();
+    context.subscriptions.push(statusBarItem);
+
+    // Register commands
+    log.debug('Registering commands');
+    const commands = {
+        'sync-settings-with-github.initialize': async () => {
+            log.info('Initializing sync service');
+            await syncService.initialize();
+        },
+        'sync-settings-with-github.forcePush': async () => {
+            log.info('Force pushing settings');
+            await syncService.forcePush();
+        },
+        'sync-settings-with-github.forcePull': async () => {
+            log.info('Force pulling settings');
+            await syncService.forcePull();
+        },
+        'sync-settings-with-github.sync': async () => {
+            log.info('Syncing settings');
+            await syncService.sync();
+        },
+        'sync-settings-with-github.toggleSync': () => {
+            const newState = !configuration.getSyncEnabled();
+            log.info('Toggling sync:', newState ? 'enabled' : 'disabled');
+            configuration.setSyncEnabled(newState);
+            return `Settings sync ${newState ? 'enabled' : 'disabled'}`;
+        },
+        'sync-settings-with-github.openRepository': () => {
+            log.info('Opening repository in new window');
+            const terminal = vscode.window.createTerminal('Settings Sync');
+            terminal.sendText(`code ${gitService.gitDirectory}`);
+            terminal.show();
+        },
+        'sync-settings-with-github.reinitialize': async () => {
+            log.info('Reinitializing git service');
+            await gitService.reinitialize();
+        },
+    };
+
+    const disposables = Object.entries(commands).map(([commandId, handler]) =>
+        vscode.commands.registerCommand(commandId, async () => {
+            try {
+                log.debug('Executing command:', commandId);
+                const result = await handler();
+                if (result) {
+                    vscode.window.showInformationMessage(result);
+                }
+            } catch (error) {
+                log.error('Command execution failed:', commandId, error);
+                vscode.window.showErrorMessage(`Command failed: ${error instanceof Error ? error.message : String(error)}`);
+            }
+        })
+    );
+
+    context.subscriptions.push(...disposables);
+    log.info('Extension activated successfully');
 }
 
 // This method is called when your extension is deactivated
 export function deactivate() {
-	if (syncService) {
-		syncService.dispose();
-	}
-	if (statusBarItem) {
-		statusBarItem.dispose();
-	}
+    log.info('Deactivating extension');
+    if (syncService) {
+        syncService.dispose();
+    }
+    if (statusBarItem) {
+        statusBarItem.dispose();
+    }
+    log.info('Extension deactivated successfully');
 }

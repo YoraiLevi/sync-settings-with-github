@@ -40,6 +40,7 @@ Synchronize your VS Code settings, keybindings, snippets, and shell configuratio
 ## Configuration
 
 ### Git Settings
+
 \`\`\`json
 {
     "settingsSync.git.repositoryUrl": "",
@@ -50,6 +51,7 @@ Synchronize your VS Code settings, keybindings, snippets, and shell configuratio
 \`\`\`
 
 ### Sync Settings
+
 \`\`\`json
 {
     "settingsSync.syncInterval": 300,
@@ -60,6 +62,7 @@ Synchronize your VS Code settings, keybindings, snippets, and shell configuratio
 \`\`\`
 
 ### File Patterns
+
 \`\`\`json
 {
     "settingsSync.files": {
@@ -75,6 +78,7 @@ Synchronize your VS Code settings, keybindings, snippets, and shell configuratio
 \`\`\`
 
 ### Extension Sync
+
 \`\`\`json
 {
     "settingsSync.extensions.sync": true,
@@ -85,18 +89,23 @@ Synchronize your VS Code settings, keybindings, snippets, and shell configuratio
 ## Usage Examples
 
 ### Basic Setup
+
 1. Create a GitHub repository for your settings
 2. Configure the repository URL:
+
    ```json
    {
        "settingsSync.git.repositoryUrl": "https://github.com/username/vscode-settings.git"
    }
    ```
+
 3. Run "Initialize Settings Sync"
 4. Your settings will start syncing automatically
 
 ### Custom File Patterns
+
 Add custom files or folders to sync:
+
 ```json
 {
     "settingsSync.files.patterns": [
@@ -112,20 +121,26 @@ Add custom files or folders to sync:
 ## Troubleshooting
 
 ### Push Conflicts
+
 If you encounter push conflicts:
+
 1. Use "Open Settings Repository" to view the local repository
 2. Resolve conflicts manually
 3. Use "Force Push" or "Force Pull" as needed
 
 ### Sync Issues
+
 If synchronization isn't working:
+
 1. Check your Git repository URL
 2. Ensure you have proper Git credentials
 3. Check the VS Code output panel for detailed logs
 4. Try reinitializing the repository
 
 ### Missing Files
+
 If files aren't syncing:
+
 1. Verify file patterns in settings
 2. Check file permissions
 3. Check the VS Code output panel for file-related logs
@@ -143,10 +158,12 @@ This extension is automatically published to the VS Code Marketplace when a new 
 
 1. Update the version in `package.json`
 2. Create and push a new tag:
+
    ```bash
    git tag v1.0.0  # Use appropriate version
    git push origin v1.0.0
    ```
+
 3. The GitHub Action will automatically:
    - Build and test the extension
    - Create a VSIX package
