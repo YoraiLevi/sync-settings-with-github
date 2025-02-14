@@ -9,6 +9,12 @@ import { GitService, INITIAL_COMMIT_COMMIT_MESSAGE, UPDATE_SETTINGS_COMMIT_MESSA
 import { Configuration, getConfiguration } from '../utils/configuration';
 
 import { createLogger, LogLevel } from '../utils/logUtils';
+class GitConflictError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'GitConflictError';
+    }
+}
 
 const log = createLogger({
     serviceName: 'GitService-Test',
